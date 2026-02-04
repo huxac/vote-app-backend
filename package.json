@@ -27,7 +27,8 @@
     "jsonwebtoken": "^9.0.3",
     "openai": "^6.17.0",
     "pg": "^8.18.0",
-    "redis": "^5.10.0"
+    "redis": "^5.10.0",
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"
