@@ -1,0 +1,19 @@
+# Render.com Deployment Configuration
+# This file tells Render how to build and run the app
+
+services:
+  - type: web
+    name: vote-app-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true  # Auto-generate secure value
+      - key: GEMINI_API_KEY
+        sync: false  # Set manually in Render dashboard

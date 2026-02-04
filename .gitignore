@@ -1,0 +1,22 @@
+# Node modules
+node_modules/
+
+# Environment files (contains secrets)
+.env
+.env.local
+.env.production
+
+# Rate limit state
+.rate_limit.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
