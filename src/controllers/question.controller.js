@@ -129,12 +129,12 @@ exports.createQuestion = async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO questions (text, option_a, option_b, category, status, risk_score, source_url, publish_at, user_id)
-            VALUES ($1, $2, $3, $4, 'published', 0, NULL, NOW(), $5)
+            INSERT INTO questions (text, category, status, source_url, user_id)
+            VALUES ($1, $2, 'published', NULL, $3)
             RETURNING id
         `;
 
-        const result = await pool.query(query, [text, option_a, option_b, category, userId]);
+        const result = await pool.query(query, [text, category, userId]);
 
         // IMPORTANT: Also create poll_options entries so the vote logic works!
         // The getQuestions query uses 'poll_options' table, not columns option_a/b
