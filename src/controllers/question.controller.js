@@ -159,6 +159,6 @@ exports.createQuestion = async (req, res) => {
 
     } catch (error) {
         console.error('Create Question Error:', error);
-        res.status(500).json({ error: 'Server error creating question' });
+        res.status(500).json({ error: 'Server error creating question: ' + error.message });
     }
 };
