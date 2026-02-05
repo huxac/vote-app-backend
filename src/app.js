@@ -21,6 +21,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/questions', questionRoutes);
+app.use('/api/v1/comments', require('./routes/comments.routes'));
 
 // Error Handler
 app.use((err, req, res, next) => {

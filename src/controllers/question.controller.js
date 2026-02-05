@@ -1,29 +1,52 @@
 const { pool } = require('../config/db');
 
-// GET /api/v1/questions (Fetch next batch of questions)
+// GET /api/v1/questions (Viral Feed)
 exports.getQuestions = async (req, res) => {
-    const userId = req.user.id; // From Auth Middleware
-    const limit = parseInt(req.query.limit) || 10;
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 20;
+    const page = parseInt(req.query.page) || 1;
+    const offset = (page - 1) * limit;
 
     try {
-        // Fetch published questions that the user HAS NOT voted on
+        // Fetch questions sorted by Engagement Score (Viral Algo) & Recency
+        // Using a weighted score: Engagement * 2 + Recency Factor
         const query = `
-      SELECT q.id, q.text, q.option_a, q.option_b, q.category, q.source_url, q.created_at
-      FROM questions q
-      WHERE q.status = 'published'
-      AND NOT EXISTS (
-        SELECT 1 FROM votes v WHERE v.question_id = q.id AND v.user_id = $1
-      )
-      ORDER BY q.publish_at DESC
-      LIMIT $2
-    `;
+            SELECT 
+                q.id, q.text, q.category, q.source_url, q.created_at, 
+                q.vote_count, q.comment_count, q.user_id as creator_id,
+                
+                -- Check if current user voted
+                (SELECT option_id FROM votes v WHERE v.question_id = q.id AND v.user_id = $1) as user_voted_option,
+                
+                -- Fetch Options as JSON array
+                COALESCE(
+                    (SELECT json_agg(json_build_object(
+                        'id', po.id, 
+                        'text', po.option_text, 
+                        'vote_count', po.vote_count,
+                        'percentage', CASE WHEN q.vote_count > 0 
+                                      THEN ROUND((po.vote_count::numeric / q.vote_count) * 100) 
+                                      ELSE 0 END
+                    ) ORDER BY po.id) 
+                    FROM poll_options po WHERE po.question_id = q.id),
+                    '[]'::json
+                ) as options
 
-        const result = await pool.query(query, [userId, limit]);
+            FROM questions q
+            WHERE q.status = 'published'
+            ORDER BY 
+               -- Viral Algorithm: Simple heuristic
+               (q.vote_count + q.comment_count * 2) DESC, 
+               q.created_at DESC
+            LIMIT $2 OFFSET $3
+        `;
+
+        const result = await pool.query(query, [userId, limit, offset]);
 
         res.status(200).json(result.rows);
     } catch (error) {
-        console.error('Fetch Questions Error:', error);
-        res.status(500).json({ error: 'Server error fetching questions' });
+        console.error('Fetch Questions X Error:', error);
+        res.status(500).json({ error: 'Server error fetching feed' });
     }
 };
 
@@ -31,58 +54,65 @@ exports.getQuestions = async (req, res) => {
 exports.voteQuestion = async (req, res) => {
     const userId = req.user.id;
     const questionId = req.params.id;
-    const { choice } = req.body; // 'A' or 'B'
+    const { optionId } = req.body; // UUID of the selected option
 
-    if (!['A', 'B'].includes(choice)) {
-        return res.status(400).json({ error: 'Invalid choice. Must be A or B' });
+    if (!optionId) {
+        return res.status(400).json({ error: 'Option ID is required' });
     }
 
+    const client = await pool.connect();
+
     try {
-        // Record Vote
-        await pool.query(
-            'INSERT INTO votes (user_id, question_id, choice) VALUES ($1, $2, $3)',
-            [userId, questionId, choice]
+        await client.query('BEGIN');
+
+        // 1. Record Vote (Ensure unique per user/question via DB constraint)
+        await client.query(
+            'INSERT INTO votes (user_id, question_id, option_id) VALUES ($1, $2, $3)',
+            [userId, questionId, optionId]
         );
 
-        // Calculate Real-time Stats (Simple COUNT for MVP, can optimize with Redis later)
-        const statsQuery = `
-      SELECT 
-        SUM(CASE WHEN choice = 'A' THEN 1 ELSE 0 END) as count_a,
-        SUM(CASE WHEN choice = 'B' THEN 1 ELSE 0 END) as count_b,
-        COUNT(*) as total
-      FROM votes
-      WHERE question_id = $1
-    `;
+        // 2. Increment Counters (Atomic update)
+        await client.query('UPDATE questions SET vote_count = vote_count + 1 WHERE id = $1', [questionId]);
+        await client.query('UPDATE poll_options SET vote_count = vote_count + 1 WHERE id = $1', [optionId]);
 
-        const statsRes = await pool.query(statsQuery, [questionId]);
-        const { count_a, count_b, total } = statsRes.rows[0];
+        // 3. Fetch Updated Stats
+        const statsRes = await client.query(`
+            SELECT 
+                po.id, 
+                po.vote_count,
+                q.vote_count as total_votes
+            FROM poll_options po
+            JOIN questions q ON q.id = po.question_id
+            WHERE po.question_id = $1
+        `, [questionId]);
 
-        // Determine majority status for user
-        const userChoiceCount = choice === 'A' ? parseInt(count_a) : parseInt(count_b);
-        const percentage = total > 0 ? Math.round((userChoiceCount / total) * 100) : 0;
-        const isMajority = percentage >= 50;
+        await client.query('COMMIT');
+
+        // Calculate Percentages
+        const total = statsRes.rows.length > 0 ? statsRes.rows[0].total_votes : 0;
+        const stats = statsRes.rows.map(row => ({
+            id: row.id,
+            count: row.vote_count,
+            percentage: total > 0 ? Math.round((row.vote_count / total) * 100) : 0
+        }));
 
         res.status(201).json({
             message: 'Vote cast successfully',
             stats: {
-                total: parseInt(total),
-                choice_a: parseInt(count_a),
-                choice_b: parseInt(count_b),
-                percentage_a: total > 0 ? Math.round((parseInt(count_a) / total) * 100) : 0,
-                percentage_b: total > 0 ? Math.round((parseInt(count_b) / total) * 100) : 0,
-            },
-            user_feedback: {
-                is_majority: isMajority,
-                percentage: percentage
+                total,
+                options: stats
             }
         });
 
     } catch (error) {
+        await client.query('ROLLBACK');
         if (error.code === '23505') { // Unique violation
-            return res.status(409).json({ error: 'You have already voted on this question' });
+            return res.status(409).json({ error: 'You have already voted on this poll' });
         }
-        console.error('Vote Error:', error);
+        console.error('Vote X Error:', error);
         res.status(500).json({ error: 'Server error casting vote' });
+    } finally {
+        client.release();
     }
 };
 // POST /api/v1/questions/create
