@@ -85,3 +85,31 @@ exports.voteQuestion = async (req, res) => {
         res.status(500).json({ error: 'Server error casting vote' });
     }
 };
+// POST /api/v1/questions/create
+exports.createQuestion = async (req, res) => {
+    const { text, option_a, option_b, category } = req.body;
+
+    // Basic validation
+    if (!text || !option_a || !option_b || !category) {
+        return res.status(400).json({ error: 'All fields are required (text, option_a, option_b, category)' });
+    }
+
+    try {
+        const query = `
+            INSERT INTO questions (text, option_a, option_b, category, status, risk_score, source_url, publish_at)
+            VALUES ($1, $2, $3, $4, 'published', 0, NULL, NOW())
+            RETURNING id
+        `;
+
+        const result = await pool.query(query, [text, option_a, option_b, category]);
+
+        res.status(201).json({
+            message: 'Question created successfully',
+            id: result.rows[0].id
+        });
+
+    } catch (error) {
+        console.error('Create Question Error:', error);
+        res.status(500).json({ error: 'Server error creating question' });
+    }
+};
