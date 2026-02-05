@@ -35,7 +35,9 @@ exports.getQuestions = async (req, res) => {
             FROM questions q
             WHERE q.status = 'published'
             ORDER BY 
-               -- Viral Algorithm: Simple heuristic
+               -- Viral Algorithm: 
+               -- 1. Freshness Boost (First 20 mins get +50 score to jumpstart)
+               (CASE WHEN EXTRACT(EPOCH FROM (NOW() - q.created_at)) < 1200 THEN 50 ELSE 0 END) +
                (q.vote_count + q.comment_count * 2) DESC, 
                q.created_at DESC
             LIMIT $2 OFFSET $3
