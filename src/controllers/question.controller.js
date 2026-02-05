@@ -120,6 +120,7 @@ exports.voteQuestion = async (req, res) => {
 // POST /api/v1/questions/create
 exports.createQuestion = async (req, res) => {
     const { text, option_a, option_b, category } = req.body;
+    const userId = req.user.id; // From auth middleware
 
     // Basic validation
     if (!text || !option_a || !option_b || !category) {
@@ -128,16 +129,32 @@ exports.createQuestion = async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO questions (text, option_a, option_b, category, status, risk_score, source_url, publish_at)
-            VALUES ($1, $2, $3, $4, 'published', 0, NULL, NOW())
+            INSERT INTO questions (text, option_a, option_b, category, status, risk_score, source_url, publish_at, user_id)
+            VALUES ($1, $2, $3, $4, 'published', 0, NULL, NOW(), $5)
             RETURNING id
         `;
 
-        const result = await pool.query(query, [text, option_a, option_b, category]);
+        const result = await pool.query(query, [text, option_a, option_b, category, userId]);
+
+        // IMPORTANT: Also create poll_options entries so the vote logic works!
+        // The getQuestions query uses 'poll_options' table, not columns option_a/b
+        const questionId = result.rows[0].id;
+
+        // Insert options into poll_options table
+        const options = [option_a, option_b];
+        if (req.body.option_c) options.push(req.body.option_c);
+        if (req.body.option_d) options.push(req.body.option_d);
+
+        for (const optText of options) {
+            await pool.query(
+                'INSERT INTO poll_options (question_id, option_text, vote_count) VALUES ($1, $2, 0)',
+                [questionId, optText]
+            );
+        }
 
         res.status(201).json({
             message: 'Question created successfully',
-            id: result.rows[0].id
+            id: questionId
         });
 
     } catch (error) {
